@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
+
 contract RiskOracle {
     enum RiskLevel {
         LOW,
@@ -8,6 +11,7 @@ contract RiskOracle {
         HIGH,
         CRITICAL
     }
+    using ECDSA for bytes32;
 
     struct RiskProfile {
         uint8 score;
@@ -16,13 +20,18 @@ contract RiskOracle {
         bytes32 reportHash;
         uint64 updatedAt;
     }
+    // La dirección pública de la wallet que pusiste en tu .env (AGENT_PRIVATE_KEY)
+    address public agentAddress;
 
     address public owner;
     mapping(address => bool) public updater;
     mapping(address => RiskProfile) private risks;
+    // Mapeo para guardar el último score de riesgo de una wallet
+    mapping(address => uint8) public userRiskScores;
 
     event RiskProfileUpdated(address indexed wallet, uint8 score, RiskLevel level, bool suspiciousActivity, bytes32 reportHash);
     event UpdaterSet(address indexed account, bool allowed);
+    event RiskAttested(address indexed user, uint8 score);
 
     modifier onlyOwner() {
         require(msg.sender == owner, "ONLY_OWNER");
@@ -33,9 +42,29 @@ contract RiskOracle {
         require(msg.sender == owner || updater[msg.sender], "ONLY_UPDATER");
         _;
     }
+    // Función que llamará el frontend enviando la firma generada por agent.ts
+    function recordRiskScore(address user, uint8 riskScore, bytes memory signature) public {
+        // 1. Recrear el hash exacto que firmó tu backend (agent.ts)
+        bytes32 messageHash = keccak256(abi.encodePacked(user, riskScore));
+        
+        // 2. Agregar el prefijo estándar de Ethereum (EIP-191)
+        bytes32 ethSignedMessageHash = MessageHashUtils.toEthSignedMessageHash(messageHash);
+        
+        // 3. Recuperar qué dirección firmó el mensaje
+        address recoveredSigner = ECDSA.recover(ethSignedMessageHash, signature);
+        
+        // 4. Validar que la firma proviene exclusivamente de tu servidor
+        require(recoveredSigner == agentAddress, "RiskOracle: Firma del agente invalida");
 
-    constructor() {
+        // 5. Guardar el estado permanentemente en Avalanche
+        userRiskScores[user] = riskScore;
+        
+        emit RiskAttested(user, riskScore);
+    }
+
+    constructor(address _agentAddress) {
         owner = msg.sender;
+        agentAddress = _agentAddress;
     }
 
     function setUpdater(address account, bool allowed) external onlyOwner {
