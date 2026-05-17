@@ -3,6 +3,7 @@ import cors from "cors";
 import { connectDB } from "./database";
 import { appRoutes } from "./routes";
 import * as dotenv from "dotenv";
+import path from "path";
 
 dotenv.config();
 
@@ -13,6 +14,10 @@ const port = process.env.API_PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
+// Servir los archivos estáticos del frontend
+app.use(express.static(path.join(__dirname, "../frontend")));
+
+// Montar las rutas principales de AvaReg
 app.use(appRoutes);
 
 app.listen(port, async () => {

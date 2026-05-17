@@ -18,29 +18,46 @@ const provider = new ethers.JsonRpcProvider(
 );
 
 // Fallback temporal para la key si aún no está en el .env
-const agentWallet = new ethers.Wallet(
-  process.env.AGENT_PRIVATE_KEY || "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", 
-  provider
-);
+const rawKey = process.env.AGENT_PRIVATE_KEY || "";
+const safeKey = (rawKey.startsWith("0x") || rawKey.length >= 64) 
+  ? rawKey 
+  : "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const agentWallet = new ethers.Wallet(safeKey, provider);
 
 // Middleware de autenticación (Mockeado para testeo rápido)
 const verifyPrivyAuth = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-  console.warn("⚠️ ALERTA: Autenticación de Privy desactivada temporalmente para pruebas");
-  next(); 
+  // Si no hay credenciales reales en el .env, permitimos el paso para la Demo del Hackathon
+  if (!process.env.PRIVY_APP_ID || process.env.PRIVY_APP_ID === "mock_id") {
+    console.warn("⚠️ ALERTA: Autenticación de Privy desactivada. Usando modo Demo.");
+    return next();
+  }
+
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith("Bearer ")) {
+    res.status(401).json({ success: false, error: "No autorizado. Falta el token de Privy." });
+    return;
+  }
+
+  try {
+    const token = authHeader.split(" ")[1];
+    // Valida criptográficamente el token con los servidores de Privy
+    await privy.verifyAuthToken(token);
+    next();
+  } catch (error) {
+    console.error("Error validando token de Privy:", error);
+    res.status(401).json({ success: false, error: "Token de Privy inválido o expirado." });
+  }
 };
 
 // Endpoint principal del On-Chain Agent
 agentRouter.post("/api/attest-risk", verifyPrivyAuth, async (req: Request, res: Response): Promise<void> => {
   try {
-    const { userAddress } = req.body;
+    const { userAddress, riskScore } = req.body;
 
     if (!userAddress || !ethers.isAddress(userAddress)) {
       res.status(400).json({ success: false, error: "Dirección EVM del usuario inválida" });
       return;
     }
-
-    // MVP: Score aleatorio. Posteriormente aquí integraríamos el Wavy Node API adapter
-    const riskScore = Math.floor(Math.random() * 101);
 
     // Empaquetar variables igual que en Solidity con keccak256(abi.encodePacked(...))
     const messageHash = ethers.solidityPackedKeccak256(

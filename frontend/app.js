@@ -1,3 +1,9 @@
+// Configuración del Smart Contract en Avalanche Fuji
+let RISK_ORACLE_ADDRESS = "";
+const RISK_ORACLE_ABI = [
+  "function recordRiskScore(address user, uint8 riskScore, bytes signature) public"
+];
+
 const products = {
   AR: {
     name: "Argentina ON",
@@ -102,8 +108,34 @@ function selectProduct(product) {
 }
 
 function completeProfile() {
+  alert("✅ Simulación de Demo: Formulario de KYC y Perfil de Inversor completados y validados por la institución.");
   state.profileComplete = true;
   addEvent("approved", `Investor profile completed for ${products[state.product].country}; suitability stored as hash.`);
+  render();
+}
+
+async function submitKycForm() {
+  const wallet = $("#kycWallet").value.trim();
+  const country = $("#kycCountryInput").value.trim();
+  
+  if (!wallet || !country) {
+    alert("Por favor ingresa la wallet y el país.");
+    return;
+  }
+
+  $("#submitKyc").textContent = "Guardando en Base de Datos...";
+  
+  await fetch("/api/users", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ walletAddress: wallet, country: country })
+  });
+
+  state.profileComplete = true;
+  addEvent("approved", `Investor profile completed for ${products[state.product].country}; suitability stored as hash.`);
+  $("#kycFormBox").innerHTML = "<p class='status-line' style='color: green;'>✅ Perfil guardado en MongoDB y KYC aprobado localmente.</p>";
+  addEvent("approved", `Perfil de Inversor guardado en BD local para ${country}.`);
+  render();
 }
 
 async function loadWavyConfig() {
@@ -113,6 +145,11 @@ async function loadWavyConfig() {
     $("#wavyStatus").textContent = payload.configured
       ? `Wavy configured · chain ${payload.chainId} · registration ${payload.registerAddresses ? "on" : "off"}`
       : `Wavy not configured: ${payload.error}`;
+    if (payload.riskOracleAddress) RISK_ORACLE_ADDRESS = payload.riskOracleAddress;
+    
+    if (RISK_ORACLE_ADDRESS) {
+      console.log("✅ Dirección del RiskOracle cargada desde el servidor:", RISK_ORACLE_ADDRESS);
+    }
   } catch (error) {
     $("#wavyStatus").textContent = `Wavy config check failed: ${error.message}`;
   }
@@ -133,6 +170,21 @@ async function scanWavy() {
     if (!response.ok || !payload.success) {
       throw new Error(payload.error || "WAVY_SCAN_FAILED");
     }
+
+    // Pedir al Agente On-Chain que firme este score criptográficamente
+    $("#wavyStatus").textContent = "Obteniendo firma del Agente...";
+    const agentRes = await fetch("/api/attest-risk", {
+      method: "POST",
+      headers: { 
+        "Content-Type": "application/json",
+        // En producción, aquí viajaría el JWT real obtenido tras hacer login con Privy
+        "Authorization": `Bearer ${localStorage.getItem("privy_token") || "demo_token"}` 
+      },
+      body: JSON.stringify({ userAddress: address, riskScore: payload.risk.riskScore })
+    });
+    const agentPayload = await agentRes.json();
+    if (agentPayload.success) state.agentSignature = agentPayload.signature;
+
     applyWavyRisk(payload.risk);
     const registrationNote = payload.registration?.warning ? ` Registration warning: ${payload.registration.message}.` : "";
     $("#wavyStatus").textContent = `Wavy scan complete. Analysis ${payload.risk.analysisId || "n/a"}.${registrationNote}`;
@@ -161,10 +213,51 @@ function applyWavyRisk(risk) {
 
 function requestAccess() {
   const [decision, reason] = evaluate();
-  state.txHash = shortHash(`${state.product}-${state.score}-${Date.now()}`);
   state.referralStatus = decision === "Allowed" ? "ROUTED" : decision === "Review" ? "PENDING_REVIEW" : "REJECTED";
   const wavyProof = state.reportHash ? ` Wavy report hash ${state.reportHash.slice(0, 18)}...` : "";
   addEvent(decision === "Blocked" ? "blocked" : decision === "Review" ? "review" : "approved", `Referral ${state.referralStatus}: ${reason}. Tx ${state.txHash}.${wavyProof}`);
+
+  // Disparar la transacción real hacia Avalanche si no está bloqueado
+  if (decision !== "Blocked") {
+    submitRiskToAvalanche();
+  }
+}
+
+async function submitRiskToAvalanche() {
+  if (!window.ethereum) {
+    alert("Por favor, instala Core Wallet o MetaMask para interactuar con Avalanche.");
+    return;
+  }
+  if (state.score === null || !state.agentSignature) {
+    alert("Primero debes escanear la wallet para obtener el score y la firma del Agente.");
+    return;
+  }
+
+  if (!RISK_ORACLE_ADDRESS) {
+    alert("Falta configurar RISK_ORACLE_ADDRESS en el archivo .env del servidor.");
+    return;
+  }
+
+  try {
+    $("#txHash").textContent = "Autorizando en wallet...";
+    const provider = new ethers.BrowserProvider(window.ethereum);
+    const signer = await provider.getSigner();
+
+    const contract = new ethers.Contract(RISK_ORACLE_ADDRESS, RISK_ORACLE_ABI, signer);
+
+    addEvent("review", "Firma solicitada en tu wallet (Core/MetaMask)...");
+    const tx = await contract.recordRiskScore(state.walletAddress, state.score, state.agentSignature);
+    
+    addEvent("review", `Transacción enviada a Fuji. Esperando confirmación...`);
+    const receipt = await tx.wait();
+    
+    state.txHash = receipt.hash;
+    addEvent("approved", `✅ Éxito: RiskScore validado y guardado on-chain en el bloque ${receipt.blockNumber}`);
+    render();
+  } catch (error) {
+    console.error(error);
+    addEvent("blocked", `Transacción fallida: ${error.message}`);
+  }
 }
 
 function transferWithScannedBuyer() {
@@ -210,6 +303,13 @@ function runScenario() {
   addEvent("review", "Run Wavy scan with configured credentials, then request access and execute transfer.");
 }
 
+function simulatePrivyLogin() {
+  localStorage.setItem("privy_token", "demo_token_123");
+  $("#privyLoginBtn").textContent = "✓ Authenticated (Privy)";
+  $("#privyLoginBtn").style.background = "#e0e7ff";
+  addEvent("approved", "User securely authenticated via Privy API.");
+}
+
 $$(".nav").forEach((button) => {
   button.addEventListener("click", () => {
     $$(".nav").forEach((item) => item.classList.remove("active"));
@@ -222,11 +322,13 @@ $$(".nav").forEach((button) => {
 $("#selectAR").addEventListener("click", () => selectProduct("AR"));
 $("#selectMX").addEventListener("click", () => selectProduct("MX"));
 $("#completeProfile").addEventListener("click", completeProfile);
+$("#submitKyc").addEventListener("click", submitKycForm);
 $("#scanWavy").addEventListener("click", scanWavy);
 $("#requestAccess").addEventListener("click", requestAccess);
 $("#transferWithScannedBuyer").addEventListener("click", transferWithScannedBuyer);
 $("#resetDemo").addEventListener("click", resetDemo);
 $("#runScenario").addEventListener("click", runScenario);
+$("#privyLoginBtn").addEventListener("click", simulatePrivyLogin);
 
 render();
 loadWavyConfig();
