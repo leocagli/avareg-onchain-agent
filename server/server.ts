@@ -14,9 +14,6 @@ const port = process.env.API_PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
-// Servir los archivos estáticos del frontend
-app.use(express.static(path.join(__dirname, "../frontend")));
-
 // Montar las rutas principales de AvaReg
 app.use(appRoutes);
 

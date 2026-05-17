@@ -18,7 +18,9 @@ export const connectDB = async () => {
 const userSchema = new mongoose.Schema({
   walletAddress: { type: String, required: true, unique: true },
   country: { type: String, required: true },
-  isVerified: { type: Boolean, default: false }
+  fullName: { type: String },
+  investorType: { type: String },
+  isVerified: { type: Boolean, default: false },
 });
 
 export const User = mongoose.model("User", userSchema);

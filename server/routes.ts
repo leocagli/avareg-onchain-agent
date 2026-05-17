@@ -27,6 +27,26 @@ appRoutes.get("/api/users/:wallet", async (req: Request, res: Response): Promise
   }
 });
 
+appRoutes.post("/api/users", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { walletAddress, country, fullName, investorType } = req.body;
+    let user = await User.findOne({ walletAddress });
+    if (!user) {
+      user = new User({ walletAddress, country, fullName, investorType, isVerified: true });
+      await user.save();
+    } else {
+      user.country = country;
+      user.fullName = fullName;
+      user.investorType = investorType;
+      user.isVerified = true;
+      await user.save();
+    }
+    res.json({ success: true, data: user });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // 4. Rutas de Wavy Node (Migradas)
 appRoutes.get("/api/wavy/config", (req: Request, res: Response) => {
   res.json({
@@ -40,38 +60,19 @@ appRoutes.get("/api/wavy/config", (req: Request, res: Response) => {
 appRoutes.post("/api/wavy/scan", async (req: Request, res: Response) => {
   try {
     const { address, foreignUserId, description } = req.body;
-    
-    // Si configuraste las llaves reales en tu .env, llamamos a la API de Wavy
-    if (process.env.WAVYNODE_API_KEY && process.env.WAVYNODE_URL) {
-      const wavyResponse = await fetch(`${process.env.WAVYNODE_URL}/api/v1/scan`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${process.env.WAVYNODE_API_KEY}`
-        },
-        body: JSON.stringify({ address, chainId: process.env.WAVYNODE_CHAIN_ID || 43113 })
-      });
-      
-      const wavyData = await wavyResponse.json();
-      if (!wavyResponse.ok) throw new Error(wavyData.message || "Error al conectar con Wavy");
-      
-      res.json({ success: true, risk: wavyData });
-    } else {
-      // Fallback: Si no hay llaves reales en el .env, usamos el simulador (Mock)
-      console.warn("⚠️ WAVYNODE_API_KEY no encontrada. Usando score simulado.");
-      const mockScore = Math.floor(Math.random() * 100);
-      res.json({
-        success: true,
-        risk: {
-          address,
-          riskScore: mockScore,
-          suspiciousActivity: mockScore >= 80,
-          riskReason: mockScore >= 80 ? "Simulated high risk" : "Clean wallet",
-          analysisId: `sim-${Date.now()}`,
-          reportHash: `0x${Date.now().toString(16)}`
-        }
-      });
-    }
+    // Mock de Wavy Scan (Score aleatorio para la demo)
+    const mockScore = Math.floor(Math.random() * 100);
+    res.json({
+      success: true,
+      risk: {
+        address,
+        riskScore: mockScore,
+        suspiciousActivity: mockScore >= 80,
+        riskReason: mockScore >= 80 ? "Simulated high risk" : "Clean wallet",
+        analysisId: `sim-${Date.now()}`,
+        reportHash: `0x${Date.now().toString(16)}`
+      }
+    });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
